@@ -69,9 +69,9 @@ public:
   }
 
   void
-  setInterestInterval(time::milliseconds interval)
+  setInterestInterval(time::microseconds interval)
   {
-    BOOST_ASSERT(interval > 0_ms);
+    BOOST_ASSERT(interval > 0_us);
     m_interestInterval = interval;
   }
 
@@ -110,7 +110,7 @@ public:
     m_signalSet.async_wait([this] (auto&&...) { stop(); });
 
     boost::asio::deadline_timer timer(m_ioService,
-                                      boost::posix_time::millisec(m_interestInterval.count()));
+                                      boost::posix_time::microseconds(m_interestInterval.count()));
     timer.async_wait([this, &timer] (auto&&...) { generateTraffic(timer); });
 
     try {
@@ -497,7 +497,7 @@ private:
             m_logger.log(logLine, true, false);
           }
 
-          timer.expires_at(timer.expires_at() + boost::posix_time::millisec(m_interestInterval.count()));
+          timer.expires_at(timer.expires_at() + boost::posix_time::microsec(m_interestInterval.count()));
           timer.async_wait([this, &timer] (auto&&...) { generateTraffic(timer); });
         }
         catch (const std::exception& e) {
@@ -507,7 +507,7 @@ private:
       }
     }
     if (patternId == m_trafficPatterns.size()) {
-      timer.expires_at(timer.expires_at() + boost::posix_time::millisec(m_interestInterval.count()));
+      timer.expires_at(timer.expires_at() + boost::posix_time::microsec(m_interestInterval.count()));
       timer.async_wait([this, &timer] (auto&&...) { generateTraffic(timer); });
     }
   }
@@ -532,7 +532,7 @@ private:
 
   std::string m_configurationFile;
   std::optional<uint64_t> m_nMaximumInterests;
-  time::milliseconds m_interestInterval = 1_s;
+  time::microseconds m_interestInterval = 1_s;
 
   std::vector<InterestTrafficConfiguration> m_trafficPatterns;
   std::vector<uint32_t> m_nonces;
@@ -575,8 +575,8 @@ main(int argc, char* argv[])
   visibleOptions.add_options()
     ("help,h",      "print this help message and exit")
     ("count,c",     po::value<int>(), "total number of Interests to be generated")
-    ("interval,i",  po::value<ndn::time::milliseconds::rep>()->default_value(1000),
-                    "Interest generation interval in milliseconds")
+    ("interval,i",  po::value<ndn::time::microseconds::rep>()->default_value(1000000),
+                    "Interest generation interval in microseconds")
     ("quiet,q",     po::bool_switch(), "turn off logging of Interest generation/Data reception")
     ;
 
@@ -627,8 +627,8 @@ main(int argc, char* argv[])
   }
 
   if (vm.count("interval") > 0) {
-    ndn::time::milliseconds interval(vm["interval"].as<ndn::time::milliseconds::rep>());
-    if (interval <= 0_ms) {
+    ndn::time::microseconds interval(vm["interval"].as<ndn::time::microseconds::rep>());
+    if (interval <= 0_us) {
       std::cerr << "ERROR: the argument for option '--interval' must be positive" << std::endl;
       return 2;
     }
