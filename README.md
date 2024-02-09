@@ -50,12 +50,12 @@ sudo ./waf install
     Set the environment variable NDN_TRAFFIC_LOGFOLDER to redirect output to a log file.
 
     Options:
-      -h [ --help ]                 print this help message and exit
-      -c [ --count ] arg            total number of Interests to be generated
-      -i [ --interval ] arg (=1000) Interest generation interval in milliseconds
-      -t [ --timestamp-format ] arg format string for timestamp output (see below)
-      -q [ --quiet ]                turn off logging of Interest generation and Data reception
-      -v [ --verbose ]              log additional per-packet information
+      -h [ --help ]                    print this help message and exit
+      -c [ --count ] arg               total number of Interests to be generated
+      -i [ --interval ] arg (=1000000) Interest generation interval in microseconds
+      -t [ --timestamp-format ] arg    format string for timestamp output (see below)
+      -q [ --quiet ]                   turn off logging of Interest generation and Data reception
+      -v [ --verbose ]                 log additional per-packet information
 
 * These tools need not be used together and can be used individually as well.
 * Please refer to the sample configuration files provided for details on how to create your own.
