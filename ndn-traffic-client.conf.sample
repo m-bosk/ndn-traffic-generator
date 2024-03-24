@@ -25,6 +25,7 @@
 #CanBePrefix=Boolean
 #MustBeFresh=Boolean
 #NonceDuplicationPercentage=NNI [0-100]
+#Priority=NNI [0-3]
 #InterestLifetime=Milliseconds [>=0]
 #NextHopFaceId=NNI [>0]
 #ExpectedContent=String
@@ -35,6 +36,7 @@
 TrafficPercentage=50
 Name=/example/A
 ExpectedContent=AAAAAAAA
+Priority=2
 ##########
 TrafficPercentage=50
 Name=/example/B
