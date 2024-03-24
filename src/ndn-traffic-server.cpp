@@ -293,7 +293,8 @@ private:
         auto logLine = "Interest Received          - PatternType=" + std::to_string(patternId + 1) +
                        ", GlobalID=" + std::to_string(m_nInterestsReceived) +
                        ", LocalID=" + std::to_string(pattern.m_nInterestsReceived) +
-                       ", Name=" + interest.getName().toUri();
+                       ", Name=" + interest.getName().toUri() +
+                       ", Priority=" + std::to_string(interest.getPriority());
         m_logger.log(logLine, true, false);
       }
 
