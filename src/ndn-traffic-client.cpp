@@ -23,6 +23,7 @@
 #include <ndn-cxx/data.hpp>
 #include <ndn-cxx/face.hpp>
 #include <ndn-cxx/interest.hpp>
+#include <ndn-cxx/interest-priority.hpp>
 #include <ndn-cxx/lp/tags.hpp>
 #include <ndn-cxx/util/random.hpp>
 #include <ndn-cxx/util/time.hpp>
@@ -154,6 +155,7 @@ private:
       if (m_mustBeFresh) {
         os << "MustBeFresh=" << m_mustBeFresh << ", ";
       }
+      os << "Priority=" << m_priority << ", ";
       if (m_nonceDuplicationPercentage > 0) {
         os << "NonceDuplicationPercentage=" << m_nonceDuplicationPercentage << ", ";
       }
@@ -208,6 +210,9 @@ private:
       else if (parameter == "NonceDuplicationPercentage") {
         m_nonceDuplicationPercentage = std::stoul(value);
       }
+      else if (parameter == "Priority") {
+        m_priority = static_cast<ndn::InterestPriority>(std::stoul(value));
+      }
       else if (parameter == "InterestLifetime") {
         m_interestLifetime = time::milliseconds(std::stoul(value));
       }
@@ -237,6 +242,7 @@ private:
     std::optional<uint64_t> m_nameAppendSeqNum;
     bool m_canBePrefix = false;
     bool m_mustBeFresh = false;
+    ndn::InterestPriority m_priority;
     unsigned m_nonceDuplicationPercentage = 0;
     time::milliseconds m_interestLifetime = -1_ms;
     uint64_t m_nextHopFaceId = 0;
@@ -372,6 +378,7 @@ private:
 
     interest.setCanBePrefix(pattern.m_canBePrefix);
     interest.setMustBeFresh(pattern.m_mustBeFresh);
+    interest.setPriority(pattern.m_priority);
 
     static std::uniform_int_distribution<unsigned> duplicateNonceDist(1, 100);
     if (duplicateNonceDist(ndn::random::getRandomNumberEngine()) <= pattern.m_nonceDuplicationPercentage)
@@ -389,14 +396,15 @@ private:
   }
 
   void
-  onData(const ndn::Interest&, const ndn::Data& data, int globalRef, int localRef,
+  onData(const ndn::Interest& interest, const ndn::Data& data, int globalRef, int localRef,
          std::size_t patternId, const time::steady_clock::time_point& sentTime)
   {
     auto now = time::steady_clock::now();
     auto logLine = "Data Received      - PatternType=" + std::to_string(patternId + 1) +
                    ", GlobalID=" + std::to_string(globalRef) +
                    ", LocalID=" + std::to_string(localRef) +
-                   ", Name=" + data.getName().toUri();
+                   ", Name=" + data.getName().toUri() +
+                   ", Priority=" + std::to_string(interest.getPriority());
 
     m_nInterestsReceived++;
     m_trafficPatterns[patternId].m_nInterestsReceived++;
@@ -449,6 +457,7 @@ private:
                    ", GlobalID=" + std::to_string(globalRef) +
                    ", LocalID=" + std::to_string(localRef) +
                    ", Name=" + interest.getName().toUri() +
+                   ", Priority=" + std::to_string(interest.getPriority()) +
                    ", NackReason=" + boost::lexical_cast<std::string>(nack.getReason());
     m_logger.log(logLine, true, false);
 
@@ -466,7 +475,8 @@ private:
     auto logLine = "Interest Timed Out - PatternType=" + std::to_string(patternId + 1) +
                    ", GlobalID=" + std::to_string(globalRef) +
                    ", LocalID=" + std::to_string(localRef) +
-                   ", Name=" + interest.getName().toUri();
+                   ", Name=" + interest.getName().toUri() +
+                   ", Priority=" + std::to_string(interest.getPriority());
     m_logger.log(logLine, true, false);
 
     if (m_nMaximumInterests == globalRef) {
