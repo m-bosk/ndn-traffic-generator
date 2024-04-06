@@ -159,6 +159,9 @@ private:
       if (m_contentLength) {
         os << "ContentBytes=" << *m_contentLength << ", ";
       }
+      if (m_contentPrefix) {
+        os << "ContentBytesPrefix=" << *m_contentPrefix << ", ";
+      }
       if (!m_content.empty()) {
         os << "Content=" << m_content << ", ";
       }
@@ -192,6 +195,14 @@ private:
       else if (parameter == "ContentBytes") {
         m_contentLength = std::stoul(value);
       }
+      else if (parameter == "ContentBytesPrefix") {
+        if (*m_contentLength < value.length()) {
+          logger.log("Line " + std::to_string(lineNumber) + " - Invalid argument: " + line,
+                     false, true);
+          return false;
+        }
+        m_contentPrefix = value;
+      }
       else if (parameter == "Content") {
         m_content = value;
       }
@@ -217,6 +228,7 @@ private:
     ndn::time::milliseconds m_freshnessPeriod{-1};
     std::optional<uint32_t> m_contentType;
     std::optional<std::size_t> m_contentLength;
+    std::optional<std::string> m_contentPrefix;
     std::string m_content;
     ndn::security::SigningInfo m_signingInfo;
     uint64_t m_nInterestsReceived = 0;
@@ -278,8 +290,13 @@ private:
         data.setContentType(*pattern.m_contentType);
 
       std::string content;
-      if (pattern.m_contentLength > 0)
-        content = getRandomByteString(*pattern.m_contentLength);
+      if (pattern.m_contentLength > 0) {
+        auto contentPrefix = pattern.m_contentPrefix.value_or("");
+        auto contentLength = *pattern.m_contentLength;
+        if (pattern.m_contentPrefix)
+          contentLength -= pattern.m_contentPrefix->length();
+        content = contentPrefix + getRandomByteString(contentLength);
+      }
       if (!pattern.m_content.empty())
         content = pattern.m_content;
       data.setContent(ndn::makeStringBlock(ndn::tlv::Content, content));
