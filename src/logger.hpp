@@ -1,6 +1,6 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
- * Copyright (c) 2014-2023, Arizona Board of Regents.
+ * Copyright (c) 2014-2022, Arizona Board of Regents.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,14 +24,9 @@
 #include <cstdlib>
 #include <fstream>
 #include <string>
-#include <string_view>
 
-#include <boost/container/static_vector.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/filesystem/operations.hpp>
-#include <boost/filesystem/path.hpp>
-
-#include <ndn-cxx/util/time.hpp>
 
 namespace ndntg {
 
@@ -39,56 +34,40 @@ class Logger
 {
 public:
   explicit
-  Logger(std::string_view module)
+  Logger(const std::string& module)
     : m_module(module)
   {
   }
 
   void
-  log(std::string_view logLine, bool printTimestamp, bool printToConsole)
+  log(const std::string& logLine, bool printTime, bool printToConsole)
   {
-    boost::container::static_vector<std::reference_wrapper<std::ostream>, 2> destinations;
-    if (!m_logLocation.empty()) {
-      destinations.emplace_back(m_logFile);
-    }
-    if (m_logLocation.empty() || printToConsole) {
-      destinations.emplace_back(std::cout);
-    }
-
-    if (printTimestamp) {
-      if (m_wantUnixTime) {
-        using namespace ndn::time;
-        auto now = std::to_string(toUnixTimestamp<microseconds>(system_clock::now()).count() / 1e6);
-        for (auto dest : destinations) {
-          dest.get() << '[' << now << "] ";
-        }
-      }
-      else {
-        auto now = boost::posix_time::microsec_clock::local_time();
-        for (auto dest : destinations) {
-          dest.get() << '[' << now << "] ";
-        }
+    if (m_logLocation.length() > 0) {
+      if (printTime)
+        m_logFile << getTimestamp() << " - ";
+      m_logFile << logLine << std::endl;
+      m_logFile.flush();
+      if (printToConsole) {
+        if (printTime)
+          std::cout << getTimestamp() << " - ";
+        std::cout << logLine << std::endl;
       }
     }
-
-    for (auto dest : destinations) {
-      dest.get() << logLine << std::endl;
+    else {
+      if (printTime)
+        std::cout << getTimestamp() << " - ";
+      std::cout << logLine << std::endl;
     }
   }
 
   void
-  initialize(const std::string& instanceId, const std::string& timestampFormat)
+  initializeLog(const std::string& instanceId)
   {
-    m_wantUnixTime = timestampFormat.empty();
-    if (!timestampFormat.empty()) {
-      std::cout.imbue(std::locale(std::cout.getloc(),
-                                  new boost::posix_time::time_facet(timestampFormat.data())));
-    }
-
     m_logLocation = "";
-    if (const char* envVar = std::getenv("NDN_TRAFFIC_LOGFOLDER"); envVar != nullptr) {
+    const char* envVar = std::getenv("NDN_TRAFFIC_LOGFOLDER");
+    if (envVar != nullptr)
       m_logLocation = envVar;
-    }
+
     if (m_logLocation.empty()) {
       std::cout << "Environment variable NDN_TRAFFIC_LOGFOLDER not set.\n"
                 << "Using default output for logging." << std::endl;
@@ -101,20 +80,16 @@ public:
         auto logfile = logdir / (m_module + '_' + instanceId + ".log");
         m_logFile.open(logfile.string(), std::ofstream::out | std::ofstream::trunc);
         if (m_logFile.is_open()) {
-          if (!timestampFormat.empty()) {
-            m_logFile.imbue(std::locale(m_logFile.getloc(),
-                                        new boost::posix_time::time_facet(timestampFormat.data())));
-          }
           std::cout << "Log file initialized: " << logfile << std::endl;
         }
         else {
-          std::cout << "ERROR: Unable to initialize a log file at: " << m_logLocation << "\n"
+          std::cout << "ERROR: Unable to initialize a log file at: " << m_logLocation << std::endl
                     << "Using default output for logging." << std::endl;
           m_logLocation = "";
         }
       }
       else {
-        std::cout << "NDN_TRAFFIC_LOGFOLDER is not a directory.\n"
+        std::cout << "NDN_TRAFFIC_LOGFOLDER should be a directory.\n"
                   << "Using default output for logging." << std::endl;
         m_logLocation = "";
       }
@@ -127,10 +102,17 @@ public:
   }
 
 private:
-  const std::string m_module;
+  static std::string
+  getTimestamp()
+  {
+    auto now = boost::posix_time::second_clock::local_time();
+    return to_simple_string(now);
+  }
+
+private:
+  std::string m_module;
   std::string m_logLocation;
   std::ofstream m_logFile;
-  bool m_wantUnixTime = true;
 };
 
 } // namespace ndntg

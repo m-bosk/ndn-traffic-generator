@@ -16,7 +16,7 @@
 #
 
 # (Mandatory)
-#TrafficPercentage=Float [0-100]
+#TrafficPercentage=NNI [0-100]
 #Name=NDN Name
 #
 # (Optional)

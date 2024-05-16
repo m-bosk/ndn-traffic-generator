@@ -36,6 +36,7 @@
 
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/signal_set.hpp>
+#include <boost/asio/deadline_timer.hpp>
 #include <boost/noncopyable.hpp>
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/parsers.hpp>
@@ -50,13 +51,13 @@ namespace ndntg {
 
 namespace time = ndn::time;
 
-class NdnTrafficServer : boost::noncopyable
+class NdnTrafficPush : boost::noncopyable
 {
 public:
   explicit
-  NdnTrafficServer(const std::string& configFile)
+  NdnTrafficPush(const std::string& configFile)
     : m_signalSet(m_ioService, SIGINT, SIGTERM)
-    , m_logger("NdnTrafficServer")
+    , m_logger("NdnTrafficPush")
     , m_face(m_ioService)
     , m_configurationFile(configFile)
   {
@@ -69,7 +70,7 @@ public:
   }
 
   void
-  setContentDelay(time::milliseconds delay)
+  setContentDelay(time::microseconds delay)
   {
     BOOST_ASSERT(delay >= 0_ms);
     m_contentDelay = delay;
@@ -109,18 +110,30 @@ public:
 
     m_signalSet.async_wait([this] (const boost::system::error_code&, int) {
       if (m_nMaximumInterests && m_nInterestsReceived < *m_nMaximumInterests) {
+        m_logger.log("Async wait error set.", false, false);
         m_hasError = true;
       }
+      m_logger.log("Async wait ended.", false, false);
       stop();
     });
 
+    // Register a prefix
+    // Needs to be extended to include the async wait as in the client cause we won't be reacting to interests anymore
+    m_logger.log("We have " + std::to_string(m_trafficPatterns.size()) + " traffic patterns.", true, false);
+    
     for (std::size_t id = 0; id < m_trafficPatterns.size(); id++) {
+      m_logger.log("Registering pattern " + std::to_string(id+1) + ".", true, false);
       m_registeredPrefixes.push_back(
-        m_face.setInterestFilter(m_trafficPatterns[id].m_name,
-                                 [this, id] (auto&&, const auto& interest) { onInterest(interest, id); },
+        m_face.registerPrefix(m_trafficPatterns[id].m_name,
                                  nullptr,
                                  [this, id] (auto&&, const auto& reason) { onRegisterFailed(reason, id); }));
     }
+
+    for (std::size_t id = 0; id < m_trafficPatterns.size(); id++) {
+      m_logger.log("Starting data push for pattern " + std::to_string(id+1) + ".", true, false);
+      startPushLoop(id);
+    }
+
 
     try {
       m_face.processEvents();
@@ -147,6 +160,9 @@ private:
       }
       if (m_contentDelay >= 0_ms) {
         os << "ContentDelay=" << m_contentDelay.count() << ", ";
+      }
+      if (m_generationInterval >= 0_ms) {
+        os << "GenerationInterval=" << m_generationInterval.count() << ", ";
       }
       if (m_freshnessPeriod >= 0_ms) {
         os << "FreshnessPeriod=" << m_freshnessPeriod.count() << ", ";
@@ -179,7 +195,10 @@ private:
         m_name = value;
       }
       else if (parameter == "ContentDelay") {
-        m_contentDelay = time::milliseconds(std::stoul(value));
+        m_contentDelay = time::microseconds(std::stoul(value));
+      }
+      else if (parameter == "GenerationInterval") {
+        m_generationInterval = time::microseconds(std::stoul(value));
       }
       else if (parameter == "FreshnessPeriod") {
         m_freshnessPeriod = time::milliseconds(std::stoul(value));
@@ -211,7 +230,8 @@ private:
 
   public:
     std::string m_name;
-    time::milliseconds m_contentDelay = -1_ms;
+    time::microseconds m_contentDelay = -1_ms;
+    time::microseconds m_generationInterval = -1_ms;
     time::milliseconds m_freshnessPeriod = -1_ms;
     std::optional<uint32_t> m_contentType;
     std::optional<std::size_t> m_contentLength;
@@ -260,54 +280,98 @@ private:
   }
 
   void
-  onInterest(const ndn::Interest& interest, std::size_t patternId)
+  startPushLoop(std::size_t patternId)
+  {
+    m_logger.log("Starting push loop for pattern " + std::to_string(patternId + 1) + ".", false, false);
+    auto& pattern = m_trafficPatterns[patternId];
+    m_signalSet.async_wait([this] (auto&&...) { stop(); });
+
+    boost::asio::deadline_timer timer(m_ioService,
+                                      boost::posix_time::microseconds(pattern.m_generationInterval.count()));
+    timer.async_wait([this, &patternId, &timer] (auto&&...) { sendData(patternId, timer); });
+
+    m_logger.log("Push loop for pattern " + std::to_string(patternId + 1) + " started.", false, false);
+
+    try {
+      m_face.processEvents();
+      return;
+    }
+    catch (const std::exception& e) {
+      m_logger.log("ERROR: "s + e.what(), true, true);
+      m_ioService.stop();
+      return;
+    }
+  }
+
+  void
+  sendData(std::size_t& patternId, boost::asio::deadline_timer& timer)
   {
     auto& pattern = m_trafficPatterns[patternId];
+    ndn::Data data(pattern.m_name);
 
-    if (!m_nMaximumInterests || m_nInterestsReceived < *m_nMaximumInterests) {
-      ndn::Data data(interest.getName());
+    if (pattern.m_freshnessPeriod >= 0_ms)
+      data.setFreshnessPeriod(pattern.m_freshnessPeriod);
 
-      if (pattern.m_freshnessPeriod >= 0_ms)
-        data.setFreshnessPeriod(pattern.m_freshnessPeriod);
+    if (pattern.m_contentType)
+      data.setContentType(*pattern.m_contentType);
 
-      if (pattern.m_contentType)
-        data.setContentType(*pattern.m_contentType);
+    std::string content;
+    if (pattern.m_contentLength > 0) {
+      content = pattern.m_name + "/seq=" + std::to_string(pattern.m_nInterestsReceived) + "&%_";
+      content += getRandomByteString(*pattern.m_contentLength - content.size());
+    }
+    if (!pattern.m_content.empty())
+      content = pattern.m_content;
+    data.setContent(ndn::makeStringBlock(ndn::tlv::Content, content));
 
-      std::string content;
-      if (pattern.m_contentLength > 0) {
-        content = pattern.m_name + "/seq=" + std::to_string(pattern.m_nInterestsReceived) + "&%_";
-        content += getRandomByteString(*pattern.m_contentLength - content.size());
-      }
-      if (!pattern.m_content.empty())
-        content = pattern.m_content;
-      data.setContent(ndn::makeStringBlock(ndn::tlv::Content, content));
+    m_keyChain.sign(data, pattern.m_signingInfo);
 
-      m_keyChain.sign(data, pattern.m_signingInfo);
+    m_nInterestsReceived++;
+    pattern.m_nInterestsReceived++;
 
-      m_nInterestsReceived++;
-      pattern.m_nInterestsReceived++;
-
-      if (!m_wantQuiet) {
-        auto logLine = "Interest received          - PatternType=" + std::to_string(patternId + 1) +
-                       ", GlobalID=" + std::to_string(m_nInterestsReceived) +
-                       ", LocalID=" + std::to_string(pattern.m_nInterestsReceived) +
-                       ", Name=" + pattern.m_name;
-        m_logger.log(logLine, true, false);
-      }
-
-      if (pattern.m_contentDelay > 0_ms)
-        boost::this_thread::sleep_for(pattern.m_contentDelay);
-      if (m_contentDelay > 0_ms)
-        boost::this_thread::sleep_for(m_contentDelay);
-
-      m_face.put(data);
+    if (!m_wantQuiet) {
+      auto logLine = "Send Data          - PatternType=" + std::to_string(patternId + 1) +
+                      ", GlobalID=" + std::to_string(m_nInterestsReceived) +
+                      ", LocalID=" + std::to_string(pattern.m_nInterestsReceived) +
+                      ", Name=" + pattern.m_name;
+      m_logger.log(logLine, true, false);
     }
 
+    if (pattern.m_contentDelay > 0_ms)
+      boost::this_thread::sleep_for(pattern.m_contentDelay);
+    if (m_contentDelay > 0_ms)
+      boost::this_thread::sleep_for(m_contentDelay);
+
+    m_face.put(data);
+
+    if (!m_wantQuiet) {
+      auto logLine = "Successfully Sent Data          - PatternType=" + std::to_string(patternId + 1) +
+                      ", GlobalID=" + std::to_string(m_nInterestsReceived) +
+                      ", LocalID=" + std::to_string(pattern.m_nInterestsReceived) +
+                      ", Name=" + pattern.m_name;
+      m_logger.log(logLine, true, false);
+    } else {
+      auto logLine = "Successfully Sent Data          - GlobalID=" + std::to_string(m_nInterestsReceived) +
+                      ", LocalID=" + std::to_string(pattern.m_nInterestsReceived) +
+                      ", Name=" + pattern.m_name;
+      m_logger.log(logLine, true, false);
+    }
+
+    timer.expires_at(timer.expires_at() + boost::posix_time::microseconds(pattern.m_generationInterval.count()));
+
+    // m_logger.log("Set Timer expiration", true, false);
+    
+    timer.async_wait([this, &patternId, &timer] (auto&&...) { sendData(patternId, timer); });
+
     if (m_nMaximumInterests && m_nInterestsReceived >= *m_nMaximumInterests) {
-      logStatistics();
+      m_logger.log("Finished data sending.", false, false);
+      // logStatistics();
       m_registeredPrefixes.clear();
       m_signalSet.cancel();
     }
+
+    return;
+
   }
 
   void
@@ -321,6 +385,7 @@ private:
     m_nRegistrationsFailed++;
     if (m_nRegistrationsFailed == m_trafficPatterns.size()) {
       m_hasError = true;
+      m_logger.log("Registration failure.", false, false);
       stop();
     }
   }
@@ -342,7 +407,7 @@ private:
 
   std::string m_configurationFile;
   std::optional<uint64_t> m_nMaximumInterests;
-  time::milliseconds m_contentDelay = 0_ms;
+  time::microseconds m_contentDelay = 0_ms;
 
   std::vector<DataTrafficConfiguration> m_trafficPatterns;
   std::vector<ndn::ScopedRegisteredPrefixHandle> m_registeredPrefixes;
@@ -376,8 +441,8 @@ main(int argc, char* argv[])
   visibleOptions.add_options()
     ("help,h",    "print this help message and exit")
     ("count,c",   po::value<int>(), "maximum number of Interests to respond to")
-    ("delay,d",   po::value<ndn::time::milliseconds::rep>()->default_value(0),
-                  "wait this amount of milliseconds before responding to each Interest")
+    ("delay,d",   po::value<ndn::time::microseconds::rep>()->default_value(0),
+                  "wait this amount of microseconds before responding to each Interest")
     ("quiet,q",   po::bool_switch(), "turn off logging of Interest reception/Data generation")
     ;
 
@@ -416,7 +481,7 @@ main(int argc, char* argv[])
     return 2;
   }
 
-  ndntg::NdnTrafficServer server(configFile);
+  ndntg::NdnTrafficPush server(configFile);
 
   if (vm.count("count") > 0) {
     int count = vm["count"].as<int>();
@@ -428,7 +493,7 @@ main(int argc, char* argv[])
   }
 
   if (vm.count("delay") > 0) {
-    ndn::time::milliseconds delay(vm["delay"].as<ndn::time::milliseconds::rep>());
+    ndn::time::microseconds delay(vm["delay"].as<ndn::time::microseconds::rep>());
     if (delay < 0_ms) {
       std::cerr << "ERROR: the argument for option '--delay' cannot be negative" << std::endl;
       return 2;
