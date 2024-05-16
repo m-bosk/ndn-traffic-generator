@@ -1,3 +1,9 @@
+**This fork contains modifications enabling long-lived interests.** It also contains a new version of the `ndn-traffic-server` called `ndn-traffic-push` enabling periodic data push toward the NFD without responses to interests. The repository further serves as supporting material for publication:
+
+Marcin Bosk, Jörg Ott: Towards Domain-Speciﬁc Time-Sensitive Information-Centric Networking Architecture. To apprear at the [TENSOR Workshop](https://networking.ifip.org/2024/index.php/workshops/tensor) co-located with [IFIP Networking 2024 Conference](https://networking.ifip.org/2024/).
+
+Modifications created by Marcin Bosk on 27 April 2024.
+
 # NDN Traffic Generator
 
 [![CI](https://github.com/named-data/ndn-traffic-generator/actions/workflows/ci.yml/badge.svg)](https://github.com/named-data/ndn-traffic-generator/actions/workflows/ci.yml)
