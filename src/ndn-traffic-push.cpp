@@ -1,6 +1,6 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
- * Copyright (c) 2014-2022, Arizona Board of Regents.
+ * Copyright (c) 2014-2023, Arizona Board of Regents.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,38 +28,33 @@
 #include <ndn-cxx/util/random.hpp>
 #include <ndn-cxx/util/time.hpp>
 
+#include <chrono>
 #include <limits>
 #include <optional>
 #include <sstream>
-#include <string_view>
+#include <thread>
 #include <vector>
 
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/signal_set.hpp>
-#include <boost/asio/deadline_timer.hpp>
-#include <boost/noncopyable.hpp>
+#include <boost/core/noncopyable.hpp>
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/variables_map.hpp>
-#include <boost/thread/thread.hpp>
 
-namespace po = boost::program_options;
-using namespace ndn::time_literals;
-using namespace std::string_literals;
+using namespace std::chrono_literals;
 
 namespace ndntg {
 
-namespace time = ndn::time;
+using namespace ndn::time_literals;
+using namespace std::string_literals;
 
-class NdnTrafficPush : boost::noncopyable
+class NdnTrafficServer : boost::noncopyable
 {
 public:
   explicit
-  NdnTrafficPush(const std::string& configFile)
-    : m_signalSet(m_ioService, SIGINT, SIGTERM)
-    , m_logger("NdnTrafficPush")
-    , m_face(m_ioService)
-    , m_configurationFile(configFile)
+  NdnTrafficServer(std::string configFile)
+    : m_configurationFile(std::move(configFile))
   {
   }
 
@@ -70,10 +65,16 @@ public:
   }
 
   void
-  setContentDelay(time::microseconds delay)
+  setContentDelay(std::chrono::microseconds delay)
   {
-    BOOST_ASSERT(delay >= 0_ms);
+    BOOST_ASSERT(delay >= 0ms);
     m_contentDelay = delay;
+  }
+
+  void
+  setTimestampFormat(std::string format)
+  {
+    m_timestampFormat = std::move(format);
   }
 
   void
@@ -85,7 +86,7 @@ public:
   int
   run()
   {
-    m_logger.initializeLog(std::to_string(ndn::random::generateWord32()));
+    m_logger.initialize(std::to_string(ndn::random::generateWord32()), m_timestampFormat);
 
     if (!readConfigurationFile(m_configurationFile, m_trafficPatterns, m_logger)) {
       return 2;
@@ -96,7 +97,7 @@ public:
       return 2;
     }
 
-    m_logger.log("Traffic configuration file processing completed.\n", true, false);
+    m_logger.log("Traffic configuration file processing completed\n", true, false);
     for (std::size_t i = 0; i < m_trafficPatterns.size(); i++) {
       m_logger.log("Traffic Pattern Type #" + std::to_string(i + 1), false, false);
       m_trafficPatterns[i].printTrafficConfiguration(m_logger);
@@ -120,7 +121,7 @@ public:
     // Register a prefix
     // Needs to be extended to include the async wait as in the client cause we won't be reacting to interests anymore
     m_logger.log("We have " + std::to_string(m_trafficPatterns.size()) + " traffic patterns.", true, false);
-    
+
     for (std::size_t id = 0; id < m_trafficPatterns.size(); id++) {
       m_logger.log("Registering pattern " + std::to_string(id+1) + ".", true, false);
       m_registeredPrefixes.push_back(
@@ -141,7 +142,7 @@ public:
     }
     catch (const std::exception& e) {
       m_logger.log("ERROR: "s + e.what(), true, true);
-      m_ioService.stop();
+      m_io.stop();
       return 1;
     }
   }
@@ -158,7 +159,7 @@ private:
       if (!m_name.empty()) {
         os << "Name=" << m_name << ", ";
       }
-      if (m_contentDelay >= 0_ms) {
+      if (m_contentDelay >= 0ms) {
         os << "ContentDelay=" << m_contentDelay.count() << ", ";
       }
       if (m_generationInterval >= 0_ms) {
@@ -172,6 +173,9 @@ private:
       }
       if (m_contentLength) {
         os << "ContentBytes=" << *m_contentLength << ", ";
+      }
+      if (m_prependPriorityToContent) {
+        os << "PrependPriorityToContent=" << m_prependPriorityToContent << ", ";
       }
       if (!m_content.empty()) {
         os << "Content=" << m_content << ", ";
@@ -195,19 +199,22 @@ private:
         m_name = value;
       }
       else if (parameter == "ContentDelay") {
-        m_contentDelay = time::microseconds(std::stoul(value));
+        m_contentDelay = std::chrono::microseconds(std::stoul(value));
       }
       else if (parameter == "GenerationInterval") {
         m_generationInterval = time::microseconds(std::stoul(value));
       }
       else if (parameter == "FreshnessPeriod") {
-        m_freshnessPeriod = time::milliseconds(std::stoul(value));
+        m_freshnessPeriod = ndn::time::milliseconds(std::stoul(value));
       }
       else if (parameter == "ContentType") {
         m_contentType = std::stoul(value);
       }
       else if (parameter == "ContentBytes") {
         m_contentLength = std::stoul(value);
+      }
+      else if (parameter == "PrependPriorityToContent") {
+        m_prependPriorityToContent = parseBoolean(value);
       }
       else if (parameter == "Content") {
         m_content = value;
@@ -230,11 +237,12 @@ private:
 
   public:
     std::string m_name;
-    time::microseconds m_contentDelay = -1_ms;
-    time::microseconds m_generationInterval = -1_ms;
-    time::milliseconds m_freshnessPeriod = -1_ms;
+    std::chrono::microseconds m_contentDelay{-1};
+    std::chrono::microseconds m_generationInterval{-1};
+    ndn::time::milliseconds m_freshnessPeriod{-1};
     std::optional<uint32_t> m_contentType;
     std::optional<std::size_t> m_contentLength;
+    bool m_prependPriorityToContent = false;
     std::string m_content;
     ndn::security::SigningInfo m_signingInfo;
     uint64_t m_nInterestsReceived = 0;
@@ -243,17 +251,19 @@ private:
   void
   logStatistics()
   {
-    m_logger.log("\n\n== Interest Traffic Report ==\n", false, true);
-    m_logger.log("Total Traffic Pattern Types = " +
-                 std::to_string(m_trafficPatterns.size()), false, true);
-    m_logger.log("Total Interests Received    = " +
-                 std::to_string(m_nInterestsReceived), false, true);
+    using std::to_string;
+
+    m_logger.log("\n\n== Traffic Report ==\n", false, true);
+    m_logger.log("Total Traffic Pattern Types = " + to_string(m_trafficPatterns.size()), false, true);
+    m_logger.log("Total Interests Received    = " + to_string(m_nInterestsReceived) + "\n", false, true);
 
     for (std::size_t patternId = 0; patternId < m_trafficPatterns.size(); patternId++) {
-      m_logger.log("\nTraffic Pattern Type #" + std::to_string(patternId + 1), false, true);
-      m_trafficPatterns[patternId].printTrafficConfiguration(m_logger);
+      const auto& pattern = m_trafficPatterns[patternId];
+
+      m_logger.log("Traffic Pattern Type #" + to_string(patternId + 1), false, true);
+      pattern.printTrafficConfiguration(m_logger);
       m_logger.log("Total Interests Received    = " +
-                   std::to_string(m_trafficPatterns[patternId].m_nInterestsReceived) + "\n", false, true);
+                   to_string(pattern.m_nInterestsReceived) + "\n", false, true);
     }
   }
 
@@ -317,7 +327,7 @@ private:
 
     std::string content;
     if (pattern.m_contentLength > 0) {
-      content = pattern.m_name + "/seq=" + std::to_string(pattern.m_nInterestsReceived) + "&%_";
+      content = pattern.m_name + "/seq=" + std::to_string(pattern.m_nInterestsReceived) + "&%Priority=" + std::to_string(interest.getPriority()) + "&%_";
       content += getRandomByteString(*pattern.m_contentLength - content.size());
     }
     if (!pattern.m_content.empty())
@@ -333,14 +343,15 @@ private:
       auto logLine = "Send Data          - PatternType=" + std::to_string(patternId + 1) +
                       ", GlobalID=" + std::to_string(m_nInterestsReceived) +
                       ", LocalID=" + std::to_string(pattern.m_nInterestsReceived) +
-                      ", Name=" + pattern.m_name;
+                      ", Name=" + pattern.m_name +
+                      ", Priority=" + std::to_string(interest.getPriority());
       m_logger.log(logLine, true, false);
     }
 
-    if (pattern.m_contentDelay > 0_ms)
-      boost::this_thread::sleep_for(pattern.m_contentDelay);
-    if (m_contentDelay > 0_ms)
-      boost::this_thread::sleep_for(m_contentDelay);
+    if (pattern.m_contentDelay > 0ms)
+      std::this_thread::sleep_for(pattern.m_contentDelay);
+    if (m_contentDelay > 0ms)
+      std::this_thread::sleep_for(m_contentDelay);
 
     m_face.put(data);
 
@@ -395,19 +406,20 @@ private:
   {
     logStatistics();
     m_face.shutdown();
-    m_ioService.stop();
+    m_io.stop();
   }
 
 private:
-  boost::asio::io_service m_ioService;
-  boost::asio::signal_set m_signalSet;
-  Logger m_logger;
-  ndn::Face m_face;
+  Logger m_logger{"NdnTrafficPush"};
+  boost::asio::io_context m_io;
+  boost::asio::signal_set m_signalSet{m_io, SIGINT, SIGTERM};
+  ndn::Face m_face{m_io};
   ndn::KeyChain m_keyChain;
 
   std::string m_configurationFile;
+  std::string m_timestampFormat;
   std::optional<uint64_t> m_nMaximumInterests;
-  time::microseconds m_contentDelay = 0_ms;
+  std::chrono::microseconds m_contentDelay{0};
 
   std::vector<DataTrafficConfiguration> m_trafficPatterns;
   std::vector<ndn::ScopedRegisteredPrefixHandle> m_registeredPrefixes;
@@ -419,6 +431,8 @@ private:
 };
 
 } // namespace ndntg
+
+namespace po = boost::program_options;
 
 static void
 usage(std::ostream& os, std::string_view programName, const po::options_description& desc)
@@ -436,14 +450,16 @@ int
 main(int argc, char* argv[])
 {
   std::string configFile;
+  std::string timestampFormat;
 
   po::options_description visibleOptions("Options");
   visibleOptions.add_options()
     ("help,h",    "print this help message and exit")
-    ("count,c",   po::value<int>(), "maximum number of Interests to respond to")
-    ("delay,d",   po::value<ndn::time::microseconds::rep>()->default_value(0),
-                  "wait this amount of microseconds before responding to each Interest")
-    ("quiet,q",   po::bool_switch(), "turn off logging of Interest reception/Data generation")
+    ("count,c",   po::value<int64_t>(), "maximum number of Interests to respond to")
+    ("delay,d",   po::value<std::chrono::milliseconds::rep>()->default_value(0),
+                  "wait this amount of milliseconds before responding to each Interest")
+    ("timestamp-format,t", po::value<std::string>(&timestampFormat), "format string for timestamp output")
+    ("quiet,q",   po::bool_switch(), "turn off logging of Interest reception and Data generation")
     ;
 
   po::options_description hiddenOptions;
@@ -481,24 +497,28 @@ main(int argc, char* argv[])
     return 2;
   }
 
-  ndntg::NdnTrafficPush server(configFile);
+  ndntg::NdnTrafficPush server(std::move(configFile));
 
   if (vm.count("count") > 0) {
-    int count = vm["count"].as<int>();
+    auto count = vm["count"].as<int64_t>();
     if (count < 0) {
-      std::cerr << "ERROR: the argument for option '--count' cannot be negative" << std::endl;
+      std::cerr << "ERROR: the argument for option '--count' cannot be negative\n";
       return 2;
     }
     server.setMaximumInterests(static_cast<uint64_t>(count));
   }
 
   if (vm.count("delay") > 0) {
-    ndn::time::microseconds delay(vm["delay"].as<ndn::time::microseconds::rep>());
-    if (delay < 0_ms) {
-      std::cerr << "ERROR: the argument for option '--delay' cannot be negative" << std::endl;
+    std::chrono::microseconds delay(vm["delay"].as<std::chrono::microseconds::rep>());
+    if (delay < 0ms) {
+      std::cerr << "ERROR: the argument for option '--delay' cannot be negative\n";
       return 2;
     }
     server.setContentDelay(delay);
+  }
+
+  if (!timestampFormat.empty()) {
+    server.setTimestampFormat(std::move(timestampFormat));
   }
 
   if (vm["quiet"].as<bool>()) {
