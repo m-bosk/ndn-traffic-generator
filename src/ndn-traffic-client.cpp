@@ -66,6 +66,12 @@ public:
   }
 
   void
+  setSoftInterest()
+  {
+    m_wantSoftInterest = true;
+  }
+
+  void
   setInterestInterval(time::microseconds interval)
   {
     BOOST_ASSERT(interval > 0_us);
@@ -386,8 +392,12 @@ private:
     else
       interest.setNonce(getNewNonce());
 
+    // Interest lifetime - could be used to set how long the interest can be saved in its soft state
     if (pattern.m_interestLifetime >= 0_ms)
       interest.setInterestLifetime(pattern.m_interestLifetime);
+
+    if (m_wantSoftInterest)
+      interest.setIsSoftState(m_wantSoftInterest);
 
     if (pattern.m_nextHopFaceId > 0)
       interest.setTag(std::make_shared<ndn::lp::NextHopFaceIdTag>(pattern.m_nextHopFaceId));
@@ -400,11 +410,14 @@ private:
          std::size_t patternId, const time::steady_clock::time_point& sentTime)
   {
     auto now = time::steady_clock::now();
+    std::string delimiter = "&%_";
+    std::string rcvdCont = readString(data.getContent());
     auto logLine = "Data Received      - PatternType=" + std::to_string(patternId + 1) +
                    ", GlobalID=" + std::to_string(globalRef) +
                    ", LocalID=" + std::to_string(localRef) +
                    ", Name=" + data.getName().toUri() +
-                   ", Priority=" + std::to_string(interest.getPriority());
+                   ", Priority=" + std::to_string(interest.getPriority() +
+                   ", Metadata=" + rcvdCont.substr(0, rcvdCont.find(delimiter));
 
     m_nInterestsReceived++;
     m_trafficPatterns[patternId].m_nInterestsReceived++;
@@ -612,6 +625,7 @@ main(int argc, char* argv[])
     ("timestamp-format,t", po::value<std::string>(&timestampFormat), "format string for timestamp output")
     ("quiet,q",     po::bool_switch(), "turn off logging of Interest generation and Data reception")
     ("verbose,v",   po::bool_switch(), "log additional per-packet information")
+    ("softInterest,s",     po::bool_switch(), "Utilize soft-state interests")
     ;
 
   po::options_description hiddenOptions;
@@ -683,6 +697,10 @@ main(int argc, char* argv[])
 
   if (vm["verbose"].as<bool>()) {
     client.setVerboseLogging();
+  }
+
+  if (vm["softInterest"].as<bool>()) {
+    client.setSoftInterest();
   }
 
   return client.run();
