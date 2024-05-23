@@ -165,7 +165,7 @@ private:
       if (m_contentDelay >= 0ms) {
         os << "ContentDelay=" << m_contentDelay.count() << ", ";
       }
-      if (m_generationInterval >= 0_ms) {
+      if (m_generationInterval >= 0ms) {
         os << "GenerationInterval=" << m_generationInterval.count() << ", ";
       }
       if (m_freshnessPeriod >= 0_ms) {
@@ -339,8 +339,7 @@ private:
       auto logLine = "Send Data          - PatternType=" + std::to_string(patternId + 1) +
                       ", GlobalID=" + std::to_string(m_nInterestsReceived) +
                       ", LocalID=" + std::to_string(pattern.m_nInterestsReceived) +
-                      ", Name=" + pattern.m_name +
-                      ", Priority=" + std::to_string(interest.getPriority());
+                      ", Name=" + pattern.m_name;
       m_logger.log(logLine, true, false);
     }
 
