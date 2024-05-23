@@ -66,12 +66,6 @@ public:
   }
 
   void
-  setSoftInterest()
-  {
-    m_wantSoftInterest = true;
-  }
-
-  void
   setInterestInterval(time::microseconds interval)
   {
     BOOST_ASSERT(interval > 0_us);
@@ -88,6 +82,12 @@ public:
   setQuietLogging()
   {
     m_wantQuiet = true;
+  }
+
+  void
+  setSoftInterest()
+  {
+    m_wantSoftInterest = true;
   }
 
   void

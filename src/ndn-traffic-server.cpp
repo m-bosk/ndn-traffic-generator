@@ -286,13 +286,8 @@ private:
 
       std::string content;
       if (pattern.m_contentLength > 0) {
-        std::string contentPrefix = "";
-        std::size_t contentLength = *pattern.m_contentLength;
-        if (pattern.m_prependPriorityToContent) {
-          contentPrefix += "Priority=" + std::to_string(interest.getPriority());
-          contentLength -= 10;
-        }
-        content = contentPrefix + getRandomByteString(contentLength);
+        content = pattern.m_name + "/seq=" + std::to_string(pattern.m_nInterestsReceived) + "&%Priority=" + std::to_string(interest.getPriority()) + "&%_";
+        content += getRandomByteString(*pattern.m_contentLength - content.size());
       }
       if (!pattern.m_content.empty())
         content = pattern.m_content;
