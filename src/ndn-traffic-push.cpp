@@ -37,6 +37,9 @@
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/signal_set.hpp>
+#include <boost/asio/deadline_timer.hpp>
+#include <boost/noncopyable.hpp>
+#include <boost/thread/thread.hpp>
 #include <boost/core/noncopyable.hpp>
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/parsers.hpp>
@@ -49,11 +52,11 @@ namespace ndntg {
 using namespace ndn::time_literals;
 using namespace std::string_literals;
 
-class NdnTrafficServer : boost::noncopyable
+class NdnTrafficPush : boost::noncopyable
 {
 public:
   explicit
-  NdnTrafficServer(std::string configFile)
+  NdnTrafficPush(std::string configFile)
     : m_configurationFile(std::move(configFile))
   {
   }
@@ -174,9 +177,6 @@ private:
       if (m_contentLength) {
         os << "ContentBytes=" << *m_contentLength << ", ";
       }
-      if (m_prependPriorityToContent) {
-        os << "PrependPriorityToContent=" << m_prependPriorityToContent << ", ";
-      }
       if (!m_content.empty()) {
         os << "Content=" << m_content << ", ";
       }
@@ -202,7 +202,7 @@ private:
         m_contentDelay = std::chrono::microseconds(std::stoul(value));
       }
       else if (parameter == "GenerationInterval") {
-        m_generationInterval = time::microseconds(std::stoul(value));
+        m_generationInterval = std::chrono::microseconds(std::stoul(value));
       }
       else if (parameter == "FreshnessPeriod") {
         m_freshnessPeriod = ndn::time::milliseconds(std::stoul(value));
@@ -212,9 +212,6 @@ private:
       }
       else if (parameter == "ContentBytes") {
         m_contentLength = std::stoul(value);
-      }
-      else if (parameter == "PrependPriorityToContent") {
-        m_prependPriorityToContent = parseBoolean(value);
       }
       else if (parameter == "Content") {
         m_content = value;
@@ -242,7 +239,6 @@ private:
     ndn::time::milliseconds m_freshnessPeriod{-1};
     std::optional<uint32_t> m_contentType;
     std::optional<std::size_t> m_contentLength;
-    bool m_prependPriorityToContent = false;
     std::string m_content;
     ndn::security::SigningInfo m_signingInfo;
     uint64_t m_nInterestsReceived = 0;
@@ -296,7 +292,7 @@ private:
     auto& pattern = m_trafficPatterns[patternId];
     m_signalSet.async_wait([this] (auto&&...) { stop(); });
 
-    boost::asio::deadline_timer timer(m_ioService,
+    boost::asio::deadline_timer timer(m_io,
                                       boost::posix_time::microseconds(pattern.m_generationInterval.count()));
     timer.async_wait([this, &patternId, &timer] (auto&&...) { sendData(patternId, timer); });
 
@@ -308,7 +304,7 @@ private:
     }
     catch (const std::exception& e) {
       m_logger.log("ERROR: "s + e.what(), true, true);
-      m_ioService.stop();
+      m_io.stop();
       return;
     }
   }
@@ -327,7 +323,7 @@ private:
 
     std::string content;
     if (pattern.m_contentLength > 0) {
-      content = pattern.m_name + "/seq=" + std::to_string(pattern.m_nInterestsReceived) + "&%Priority=" + std::to_string(interest.getPriority()) + "&%_";
+      content = pattern.m_name + "/seq=" + std::to_string(pattern.m_nInterestsReceived) + "&%_";
       content += getRandomByteString(*pattern.m_contentLength - content.size());
     }
     if (!pattern.m_content.empty())

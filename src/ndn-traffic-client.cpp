@@ -416,7 +416,7 @@ private:
                    ", GlobalID=" + std::to_string(globalRef) +
                    ", LocalID=" + std::to_string(localRef) +
                    ", Name=" + data.getName().toUri() +
-                   ", Priority=" + std::to_string(interest.getPriority() +
+                   ", Priority=" + std::to_string(interest.getPriority()) +
                    ", Metadata=" + rcvdCont.substr(0, rcvdCont.find(delimiter));
 
     m_nInterestsReceived++;
@@ -591,6 +591,7 @@ private:
 
   bool m_wantQuiet = false;
   bool m_wantVerbose = false;
+  bool m_wantSoftInterest = false;
   bool m_hasError = false;
 };
 
