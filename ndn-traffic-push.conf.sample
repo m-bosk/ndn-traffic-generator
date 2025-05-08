@@ -24,6 +24,7 @@
 #PrependPriorityToContent=Boolean
 #Content=String
 #SigningInfo=String [examples below]
+#AddVersion=Boolean
 
 ##########
 # EXAMPLES

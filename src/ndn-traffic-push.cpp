@@ -177,6 +177,9 @@ private:
       if (m_contentLength) {
         os << "ContentBytes=" << *m_contentLength << ", ";
       }
+      if (m_addVersion) {
+        os << "AddVersion=" << *m_addVersion << ", ";
+      }
       if (!m_content.empty()) {
         os << "Content=" << m_content << ", ";
       }
@@ -219,6 +222,9 @@ private:
       else if (parameter == "SigningInfo") {
         m_signingInfo = ndn::security::SigningInfo(value);
       }
+      else if (parameter == "AddVersion") {
+        m_addVersion = parseBoolean(value);
+      }
       else {
         logger.log("Line " + std::to_string(lineNumber) + " - Ignoring unknown parameter: " + parameter,
                    false, true);
@@ -239,6 +245,7 @@ private:
     ndn::time::milliseconds m_freshnessPeriod{-1};
     std::optional<uint32_t> m_contentType;
     std::optional<std::size_t> m_contentLength;
+    std::optional<bool> m_addVersion;
     std::string m_content;
     ndn::security::SigningInfo m_signingInfo;
     uint64_t m_nInterestsReceived = 0;
@@ -313,7 +320,11 @@ private:
   sendData(std::size_t& patternId, boost::asio::deadline_timer& timer)
   {
     auto& pattern = m_trafficPatterns[patternId];
-    ndn::Data data(pattern.m_name);
+    
+    auto name = pattern.m_name;
+    if (name.find("/seq=") == std::string::npos && pattern.m_addVersion)
+      name += "/seq=" + std::to_string(pattern.m_nInterestsReceived);
+    ndn::Data data(name);
 
     if (pattern.m_freshnessPeriod >= 0_ms)
       data.setFreshnessPeriod(pattern.m_freshnessPeriod);
