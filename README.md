@@ -1,3 +1,7 @@
+Note: This branch contains the NDN traffic generator version, with modifications, as used by the EnGINE framework.
+
+Last modified by Marcin Bosk on 30.07.2025
+
 # NDN Traffic Generator
 
 [![CI](https://github.com/named-data/ndn-traffic-generator/actions/workflows/ci.yml/badge.svg)](https://github.com/named-data/ndn-traffic-generator/actions/workflows/ci.yml)

@@ -157,6 +157,9 @@ private:
       if (m_contentLength) {
         os << "ContentBytes=" << *m_contentLength << ", ";
       }
+      if (m_addVersion) {
+        os << "AddVersion=" << *m_addVersion << ", ";
+      }
       if (!m_content.empty()) {
         os << "Content=" << m_content << ", ";
       }
@@ -196,6 +199,9 @@ private:
       else if (parameter == "SigningInfo") {
         m_signingInfo = ndn::security::SigningInfo(value);
       }
+      else if (parameter == "AddVersion") {
+        m_addVersion = parseBoolean(value);
+      }
       else {
         logger.log("Line " + std::to_string(lineNumber) + " - Ignoring unknown parameter: " + parameter,
                    false, true);
@@ -215,6 +221,7 @@ private:
     time::milliseconds m_freshnessPeriod = -1_ms;
     std::optional<uint32_t> m_contentType;
     std::optional<std::size_t> m_contentLength;
+    std::optional<bool> m_addVersion;
     std::string m_content;
     ndn::security::SigningInfo m_signingInfo;
     uint64_t m_nInterestsReceived = 0;
@@ -265,7 +272,11 @@ private:
     auto& pattern = m_trafficPatterns[patternId];
 
     if (!m_nMaximumInterests || m_nInterestsReceived < *m_nMaximumInterests) {
-      ndn::Data data(interest.getName());
+      std::string nameString = interest.getName().toUri();
+      if (nameString.find("/seq=") == std::string::npos && pattern.m_addVersion)
+        nameString += "/seq=" + std::to_string(pattern.m_nInterestsReceived);
+      ndn::Data data(nameString);
+
 
       if (pattern.m_freshnessPeriod >= 0_ms)
         data.setFreshnessPeriod(pattern.m_freshnessPeriod);
