@@ -52,7 +52,7 @@ sudo ./waf install
     Options:
       -h [ --help ]                 print this help message and exit
       -c [ --count ] arg            total number of Interests to be generated
-      -i [ --interval ] arg (=1000) Interest generation interval in milliseconds
+      -i [ --interval ] arg (=1000) Interest generation interval in microseconds
       -t [ --timestamp-format ] arg format string for timestamp output (see below)
       -q [ --quiet ]                turn off logging of Interest generation and Data reception
       -v [ --verbose ]              log additional per-packet information
