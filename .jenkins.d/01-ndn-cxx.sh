@@ -18,7 +18,7 @@ if [[ -z $INSTALLED_VERSION ]]; then
 fi
 
 sudo rm -rf ndn-cxx-latest
-git clone --depth 1 https://github.com/named-data/ndn-cxx.git ndn-cxx-latest
+git clone --depth 1 https://github.com/tobiolalusi/ndn-cxx.git ndn-cxx-latest
 LATEST_VERSION=$(git -C ndn-cxx-latest rev-parse HEAD 2>/dev/null || echo UNKNOWN)
 
 if [[ $INSTALLED_VERSION != $LATEST_VERSION ]]; then
@@ -35,7 +35,7 @@ sudo rm -f /usr/local/lib{,64}/pkgconfig/libndn-cxx.pc
 
 pushd ndn-cxx >/dev/null
 
-./waf --color=yes configure --without-osx-keychain
+./waf --color=yes configure
 ./waf --color=yes build
 sudo ./waf --color=yes install
 

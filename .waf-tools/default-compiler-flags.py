@@ -1,5 +1,3 @@
-# -*- Mode: python; py-indent-offset: 4; indent-tabs-mode: nil; coding: utf-8; -*-
-
 import platform
 from waflib import Configure, Logs, Utils
 
@@ -127,7 +125,11 @@ class CompilerFlags(object):
 
     def getDebugFlags(self, conf):
         """Get dict of CXXFLAGS, LINKFLAGS, and DEFINES that are needed only in debug mode"""
-        return {'CXXFLAGS': [], 'LINKFLAGS': [], 'DEFINES': ['_DEBUG']}
+        return {
+            'CXXFLAGS': [],
+            'LINKFLAGS': [],
+            'DEFINES': ['BOOST_ASIO_NO_DEPRECATED', 'BOOST_FILESYSTEM_NO_DEPRECATED'],
+        }
 
     def getOptimizedFlags(self, conf):
         """Get dict of CXXFLAGS, LINKFLAGS, and DEFINES that are needed only in optimized mode"""
@@ -210,11 +212,18 @@ class ClangFlags(GccBasicFlags):
         return flags
 
     def getDebugFlags(self, conf):
-        flags = super(ClangFlags, self).getDebugFlags(conf)
-        flags['CXXFLAGS'] += ['-fcolor-diagnostics',
-                              '-Wundefined-func-template',
-                              '-Wno-unused-local-typedef', # Bugs #2657 and #3209
-                              ]
+        flags = super().getDebugFlags(conf)
+        flags['CXXFLAGS'] += self.__cxxFlags
+        # Enable assertions in libc++
+        if self.getCompilerVersion(conf) >= (18, 0, 0):
+            # https://libcxx.llvm.org/Hardening.html
+            flags['DEFINES'] += ['_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE']
+        elif self.getCompilerVersion(conf) >= (15, 0, 0):
+            # https://releases.llvm.org/15.0.0/projects/libcxx/docs/UsingLibcxx.html#enabling-the-safe-libc-mode
+            flags['DEFINES'] += ['_LIBCPP_ENABLE_ASSERTIONS=1']
+        # Tell libc++ to avoid including transitive headers
+        # https://libcxx.llvm.org/DesignDocs/HeaderRemovalPolicy.html
+        flags['DEFINES'] += ['_LIBCPP_REMOVE_TRANSITIVE_INCLUDES=1']
         return flags
 
     def getOptimizedFlags(self, conf):

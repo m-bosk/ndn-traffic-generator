@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  * Author: Jerald Paul Abraham <jeraldabraham@email.arizona.edu>
+ * Modified by: Marcin Bosk and Oluwatobiloba Victor Olalusi
  */
 
 #include "util.hpp"
@@ -157,6 +158,12 @@ private:
       if (m_contentLength) {
         os << "ContentBytes=" << *m_contentLength << ", ";
       }
+      if (m_prependPriorityToContent) {
+        os << "PrependPriorityToContent=" << m_prependPriorityToContent << ", ";
+      }
+      if (m_addVersion) {
+        os << "AddVersion=" << *m_addVersion << ", ";
+      }
       if (!m_content.empty()) {
         os << "Content=" << m_content << ", ";
       }
@@ -190,11 +197,17 @@ private:
       else if (parameter == "ContentBytes") {
         m_contentLength = std::stoul(value);
       }
+      else if (parameter == "PrependPriorityToContent") {
+        m_prependPriorityToContent = parseBoolean(value);
+      }
       else if (parameter == "Content") {
         m_content = value;
       }
       else if (parameter == "SigningInfo") {
         m_signingInfo = ndn::security::SigningInfo(value);
+      }
+      else if (parameter == "AddVersion") {
+        m_addVersion = parseBoolean(value);
       }
       else {
         logger.log("Line " + std::to_string(lineNumber) + " - Ignoring unknown parameter: " + parameter,
@@ -215,6 +228,8 @@ private:
     time::milliseconds m_freshnessPeriod = -1_ms;
     std::optional<uint32_t> m_contentType;
     std::optional<std::size_t> m_contentLength;
+    bool m_prependPriorityToContent = false;
+    std::optional<bool> m_addVersion;
     std::string m_content;
     ndn::security::SigningInfo m_signingInfo;
     uint64_t m_nInterestsReceived = 0;
@@ -265,7 +280,10 @@ private:
     auto& pattern = m_trafficPatterns[patternId];
 
     if (!m_nMaximumInterests || m_nInterestsReceived < *m_nMaximumInterests) {
-      ndn::Data data(interest.getName());
+      std::string nameString = interest.getName().toUri();
+      if (nameString.find("/seq=") == std::string::npos && pattern.m_addVersion)
+      nameString += "/seq=" + std::to_string(pattern.m_nInterestsReceived);
+      ndn::Data data(nameString);
 
       if (pattern.m_freshnessPeriod >= 0_ms)
         data.setFreshnessPeriod(pattern.m_freshnessPeriod);
@@ -275,7 +293,7 @@ private:
 
       std::string content;
       if (pattern.m_contentLength > 0) {
-        content = pattern.m_name + "/seq=" + std::to_string(pattern.m_nInterestsReceived) + "&%_";
+        content = pattern.m_name + "/seq=" + std::to_string(pattern.m_nInterestsReceived) + "&%Priority=" + std::to_string(interest.getPriority()) + "&%_";
         content += getRandomByteString(*pattern.m_contentLength - content.size());
       }
       if (!pattern.m_content.empty())
@@ -291,7 +309,8 @@ private:
         auto logLine = "Interest received          - PatternType=" + std::to_string(patternId + 1) +
                        ", GlobalID=" + std::to_string(m_nInterestsReceived) +
                        ", LocalID=" + std::to_string(pattern.m_nInterestsReceived) +
-                       ", Name=" + pattern.m_name;
+                       ", Name=" + interest.getName().toUri() +
+                       ", Priority=" + std::to_string(interest.getPriority());
         m_logger.log(logLine, true, false);
       }
 

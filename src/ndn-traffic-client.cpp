@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  * Author: Jerald Paul Abraham <jeraldabraham@email.arizona.edu>
+ * Modified by: Marcin Bosk and Oluwatobiloba Victor Olalusi
  */
 
 #include "util.hpp"
@@ -23,6 +24,7 @@
 #include <ndn-cxx/data.hpp>
 #include <ndn-cxx/face.hpp>
 #include <ndn-cxx/interest.hpp>
+#include <ndn-cxx/interest-priority.hpp>
 #include <ndn-cxx/lp/tags.hpp>
 #include <ndn-cxx/util/random.hpp>
 #include <ndn-cxx/util/time.hpp>
@@ -87,6 +89,12 @@ public:
     m_wantSoftInterest = true;
   }
 
+  void
+  setVerboseLogging()
+  {
+    m_wantSoftInterest = true;
+  }
+
   int
   run()
   {
@@ -115,8 +123,7 @@ public:
 
     m_signalSet.async_wait([this] (auto&&...) { stop(); });
 
-    boost::asio::deadline_timer timer(m_ioService,
-                                      boost::posix_time::microseconds(m_interestInterval.count()));
+    boost::asio::deadline_timer timer(m_io, boost::posix_time::microseconds(m_interestInterval.count()));
     timer.async_wait([this, &timer] (auto&&...) { generateTraffic(timer); });
 
     try {
@@ -153,6 +160,7 @@ private:
       if (m_mustBeFresh) {
         os << "MustBeFresh=" << m_mustBeFresh << ", ";
       }
+      os << "Priority=" << m_priority << ", ";
       if (m_nonceDuplicationPercentage > 0) {
         os << "NonceDuplicationPercentage=" << m_nonceDuplicationPercentage << ", ";
       }
@@ -202,6 +210,9 @@ private:
       else if (parameter == "NonceDuplicationPercentage") {
         m_nonceDuplicationPercentage = std::stoul(value);
       }
+      else if (parameter == "Priority") {
+        m_priority = static_cast<ndn::InterestPriority>(std::stoul(value));
+      }
       else if (parameter == "InterestLifetime") {
         m_interestLifetime = time::milliseconds(std::stoul(value));
       }
@@ -231,7 +242,8 @@ private:
     std::optional<uint64_t> m_nameAppendSeqNum;
     bool m_canBePrefix = false;
     bool m_mustBeFresh = false;
-    uint8_t m_nonceDuplicationPercentage = 0;
+    ndn::InterestPriority m_priority;
+    unsigned m_nonceDuplicationPercentage = 0;
     time::milliseconds m_interestLifetime = -1_ms;
     uint64_t m_nextHopFaceId = 0;
     std::optional<std::string> m_expectedContent;
@@ -366,6 +378,7 @@ private:
 
     interest.setCanBePrefix(pattern.m_canBePrefix);
     interest.setMustBeFresh(pattern.m_mustBeFresh);
+    interest.setPriority(pattern.m_priority);
 
     static std::uniform_int_distribution<> duplicateNonceDist(1, 100);
     if (duplicateNonceDist(ndn::random::getRandomNumberEngine()) <= pattern.m_nonceDuplicationPercentage)
@@ -387,15 +400,17 @@ private:
   }
 
   void
-  onData(const ndn::Interest&, const ndn::Data& data, int globalRef, int localRef,
+  onData(const ndn::Interest& interest, const ndn::Data& data, int globalRef, int localRef,
          std::size_t patternId, const time::steady_clock::time_point& sentTime)
   {
+    auto now = time::steady_clock::now();
     std::string delimiter = "&%_";
     std::string rcvdCont = readString(data.getContent());
     auto logLine = "Data Received      - PatternType=" + std::to_string(patternId + 1) +
                    ", GlobalID=" + std::to_string(globalRef) +
                    ", LocalID=" + std::to_string(localRef) +
                    ", Name=" + data.getName().toUri() +
+                   ", Priority=" + std::to_string(interest.getPriority()) +
                    ", Metadata=" + rcvdCont.substr(0, rcvdCont.find(delimiter));
 
     m_nInterestsReceived++;
@@ -444,6 +459,7 @@ private:
                    ", GlobalID=" + std::to_string(globalRef) +
                    ", LocalID=" + std::to_string(localRef) +
                    ", Name=" + interest.getName().toUri() +
+                   ", Priority=" + std::to_string(interest.getPriority()) +
                    ", NackReason=" + boost::lexical_cast<std::string>(nack.getReason());
     m_logger.log(logLine, true, false);
 
@@ -461,7 +477,8 @@ private:
     auto logLine = "Interest Timed Out - PatternType=" + std::to_string(patternId + 1) +
                    ", GlobalID=" + std::to_string(globalRef) +
                    ", LocalID=" + std::to_string(localRef) +
-                   ", Name=" + interest.getName().toUri();
+                   ", Name=" + interest.getName().toUri() +
+                   ", Priority=" + std::to_string(interest.getPriority());
     m_logger.log(logLine, true, false);
 
     if (m_nMaximumInterests == globalRef) {
@@ -560,6 +577,7 @@ private:
   double m_totalInterestRoundTripTime = 0;
 
   bool m_wantQuiet = false;
+  bool m_wantVerbose = false;
   bool m_wantSoftInterest = false;
   bool m_hasError = false;
 };
@@ -588,10 +606,12 @@ main(int argc, char* argv[])
   po::options_description visibleOptions("Options");
   visibleOptions.add_options()
     ("help,h",      "print this help message and exit")
-    ("count,c",     po::value<int>(), "total number of Interests to be generated")
+    ("count,c",     po::value<int64_t>(), "total number of Interests to be generated")
     ("interval,i",  po::value<ndn::time::microseconds::rep>()->default_value(1000000),
                     "Interest generation interval in microseconds")
-    ("quiet,q",     po::bool_switch(), "turn off logging of Interest generation/Data reception")
+    ("timestamp-format,t", po::value<std::string>(&timestampFormat), "format string for timestamp output")
+    ("quiet,q",     po::bool_switch(), "turn off logging of Interest generation and Data reception")
+    ("verbose,v",   po::bool_switch(), "log additional per-packet information")
     ("softInterest,s",     po::bool_switch(), "Utilize soft-state interests")
     ;
 
@@ -644,7 +664,7 @@ main(int argc, char* argv[])
   if (vm.count("interval") > 0) {
     ndn::time::microseconds interval(vm["interval"].as<ndn::time::microseconds::rep>());
     if (interval <= 0_us) {
-      std::cerr << "ERROR: the argument for option '--interval' must be positive" << std::endl;
+      std::cerr << "ERROR: the argument for option '--interval' must be positive\n";
       return 2;
     }
     client.setInterestInterval(interval);
@@ -652,6 +672,10 @@ main(int argc, char* argv[])
 
   if (vm["quiet"].as<bool>()) {
     client.setQuietLogging();
+  }
+
+  if (vm["softInterest"].as<bool>()) {
+    client.setSoftInterest();
   }
 
   if (vm["softInterest"].as<bool>()) {

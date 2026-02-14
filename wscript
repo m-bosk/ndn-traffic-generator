@@ -33,11 +33,11 @@ def build(bld):
 
     bld.program(target='ndn-traffic-server',
                 source='src/ndn-traffic-server.cpp',
-                use='NDN_CXX')
+                use='NDN_CXX BOOST')
     
     bld.program(target='ndn-traffic-push',
                 source='src/ndn-traffic-push.cpp',
-                use='NDN_CXX')
+                use='NDN_CXX BOOST')
 
     bld.install_files('${SYSCONFDIR}/ndn', ['ndn-traffic-client.conf.sample',
                                             'ndn-traffic-server.conf.sample',

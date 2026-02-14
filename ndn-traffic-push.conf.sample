@@ -21,8 +21,10 @@
 #FreshnessPeriod=Milliseconds [>=0]
 #ContentType=NNI [>=0]
 #ContentBytes=NNI [>0]
+#PrependPriorityToContent=Boolean
 #Content=String
 #SigningInfo=String [examples below]
+#AddVersion=Boolean
 
 ##########
 # EXAMPLES

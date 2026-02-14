@@ -1,8 +1,23 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-APT_PKGS=(build-essential pkg-config python3-minimal
-          libboost-all-dev libssl-dev libsqlite3-dev)
+APT_PKGS=(
+    dpkg-dev
+    g++
+    libboost-chrono-dev
+    libboost-date-time-dev
+    libboost-dev
+    libboost-filesystem-dev
+    libboost-log-dev
+    libboost-program-options-dev
+    libboost-stacktrace-dev
+    libboost-test-dev
+    libboost-thread-dev
+    libsqlite3-dev
+    libssl-dev
+    pkg-config
+    python3
+)
 FORMULAE=(boost openssl pkg-config)
 PIP_PKGS=()
 case $JOB_NAME in
