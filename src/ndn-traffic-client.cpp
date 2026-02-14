@@ -1,6 +1,6 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
- * Copyright (c) 2014-2023, Arizona Board of Regents.
+ * Copyright (c) 2014-2025, Arizona Board of Regents.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  * Author: Jerald Paul Abraham <jeraldabraham@email.arizona.edu>
+ * Modifications by Jonas Neubacher
  */
 
 #include "util.hpp"
@@ -27,26 +28,27 @@
 #include <ndn-cxx/util/random.hpp>
 #include <ndn-cxx/util/time.hpp>
 
+#include <chrono>
 #include <limits>
 #include <optional>
 #include <sstream>
 #include <vector>
 
-#include <boost/asio/deadline_timer.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/signal_set.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/core/noncopyable.hpp>
-#include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/variables_map.hpp>
 
-using namespace ndn::time_literals;
-using namespace std::string_literals;
+using namespace std::chrono_literals;
 
 namespace ndntg {
 
+using namespace ndn::time_literals;
+using namespace std::string_literals;
 namespace time = ndn::time;
 
 class NdnTrafficClient : boost::noncopyable
@@ -65,9 +67,9 @@ public:
   }
 
   void
-  setInterestInterval(time::milliseconds interval)
+  setInterestInterval(std::chrono::microseconds interval)
   {
-    BOOST_ASSERT(interval > 0_ms);
+    BOOST_ASSERT(interval > 0us);
     m_interestInterval = interval;
   }
 
@@ -117,7 +119,7 @@ public:
 
     m_signalSet.async_wait([this] (auto&&...) { stop(); });
 
-    boost::asio::deadline_timer timer(m_io, boost::posix_time::millisec(m_interestInterval.count()));
+    boost::asio::steady_timer timer(m_io, m_interestInterval);
     timer.async_wait([this, &timer] (auto&&...) { generateTraffic(timer); });
 
     try {
@@ -165,6 +167,10 @@ private:
       }
       if (m_expectedContent) {
         os << "ExpectedContent=" << *m_expectedContent << ", ";
+      }
+      // @todo change with finished field (probably requiredBandwidth or something like that)
+      if (m_reservation.has_value()) {
+        os << "Reservation=" << m_reservation.value() << ", ";
       }
 
       auto str = os.str();
@@ -217,6 +223,9 @@ private:
       else if (parameter == "ExpectedContent") {
         m_expectedContent = value;
       }
+      else if (parameter == "Reservation") { // @todo change with final parameter!
+        m_reservation = std::stoul(value);
+      }
       else {
         logger.log("Line " + std::to_string(lineNumber) + " - Ignoring unknown parameter: " + parameter,
                    false, true);
@@ -241,6 +250,8 @@ private:
     time::milliseconds m_interestLifetime = -1_ms;
     uint64_t m_nextHopFaceId = 0;
     std::optional<std::string> m_expectedContent;
+
+    std::optional<uint64_t> m_reservation;
 
     uint64_t m_nInterestsSent = 0;
     uint64_t m_nInterestsReceived = 0;
@@ -385,6 +396,10 @@ private:
     if (pattern.m_nextHopFaceId > 0)
       interest.setTag(std::make_shared<ndn::lp::NextHopFaceIdTag>(pattern.m_nextHopFaceId));
 
+    // @todo change with final value field when finished!
+    if (pattern.m_reservation.has_value())
+      interest.setReservation(pattern.m_reservation.value());
+
     return interest;
   }
 
@@ -449,6 +464,7 @@ private:
                    ", GlobalID=" + std::to_string(globalRef) +
                    ", LocalID=" + std::to_string(localRef) +
                    ", Name=" + interest.getName().toUri() +
+                   ", Reservation=" + std::to_string(interest.getReservation().value_or(0)) + 
                    ", NackReason=" + boost::lexical_cast<std::string>(nack.getReason());
     m_logger.log(logLine, true, false);
 
@@ -466,6 +482,7 @@ private:
     auto logLine = "Interest Timed Out - PatternType=" + std::to_string(patternId + 1) +
                    ", GlobalID=" + std::to_string(globalRef) +
                    ", LocalID=" + std::to_string(localRef) +
+                   ", Reservation=" + std::to_string(interest.getReservation().value_or(0)) + 
                    ", Name=" + interest.getName().toUri();
     m_logger.log(logLine, true, false);
 
@@ -475,7 +492,7 @@ private:
   }
 
   void
-  generateTraffic(boost::asio::deadline_timer& timer)
+  generateTraffic(boost::asio::steady_timer& timer)
   {
     if (m_nMaximumInterests && m_nInterestsSent >= *m_nMaximumInterests) {
       return;
@@ -511,11 +528,12 @@ private:
             auto logLine = "Sending Interest   - PatternType=" + std::to_string(patternId + 1) +
                            ", GlobalID=" + std::to_string(m_nInterestsSent) +
                            ", LocalID=" + std::to_string(pattern.m_nInterestsSent) +
-                           ", Name=" + interest.getName().toUri();
+                           ", Name=" + interest.getName().toUri() +
+                           ", Reservation=" + std::to_string(interest.getReservation().value_or(0));;
             m_logger.log(logLine, true, false);
           }
 
-          timer.expires_at(timer.expires_at() + boost::posix_time::millisec(m_interestInterval.count()));
+          timer.expires_at(timer.expiry() + m_interestInterval);
           timer.async_wait([this, &timer] (auto&&...) { generateTraffic(timer); });
         }
         catch (const std::exception& e) {
@@ -526,7 +544,7 @@ private:
     }
 
     if (patternId == m_trafficPatterns.size()) {
-      timer.expires_at(timer.expires_at() + boost::posix_time::millisec(m_interestInterval.count()));
+      timer.expires_at(timer.expiry() + m_interestInterval);
       timer.async_wait([this, &timer] (auto&&...) { generateTraffic(timer); });
     }
   }
@@ -552,7 +570,7 @@ private:
   std::string m_configurationFile;
   std::string m_timestampFormat;
   std::optional<uint64_t> m_nMaximumInterests;
-  time::milliseconds m_interestInterval = 1_s;
+  std::chrono::microseconds m_interestInterval{1s};
 
   std::vector<InterestTrafficConfiguration> m_trafficPatterns;
   std::vector<uint32_t> m_nonces;
@@ -597,8 +615,8 @@ main(int argc, char* argv[])
   visibleOptions.add_options()
     ("help,h",      "print this help message and exit")
     ("count,c",     po::value<int64_t>(), "total number of Interests to be generated")
-    ("interval,i",  po::value<ndn::time::milliseconds::rep>()->default_value(1000),
-                    "Interest generation interval in milliseconds")
+    ("interval,i",  po::value<std::chrono::microseconds::rep>()->default_value(1000000),
+                    "Interest generation interval in microseconds")
     ("timestamp-format,t", po::value<std::string>(&timestampFormat), "format string for timestamp output")
     ("quiet,q",     po::bool_switch(), "turn off logging of Interest generation and Data reception")
     ("verbose,v",   po::bool_switch(), "log additional per-packet information")
@@ -651,8 +669,8 @@ main(int argc, char* argv[])
   }
 
   if (vm.count("interval") > 0) {
-    ndn::time::milliseconds interval(vm["interval"].as<ndn::time::milliseconds::rep>());
-    if (interval <= 0_ms) {
+    std::chrono::microseconds interval(vm["interval"].as<std::chrono::microseconds::rep>());
+    if (interval <= 0ms) {
       std::cerr << "ERROR: the argument for option '--interval' must be positive\n";
       return 2;
     }

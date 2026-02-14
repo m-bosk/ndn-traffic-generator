@@ -1,5 +1,3 @@
-# -*- Mode: python; py-indent-offset: 4; indent-tabs-mode: nil; coding: utf-8; -*-
-
 import platform
 from waflib import Configure, Logs, Utils
 
@@ -13,29 +11,32 @@ def configure(conf):
     conf.start_msg('Checking C++ compiler version')
 
     cxx = conf.env.CXX_NAME # generic name of the compiler
-    ccver = tuple(int(i) for i in conf.env.CC_VERSION)
+    ccver = get_compiler_ver(conf)
     ccverstr = '.'.join(conf.env.CC_VERSION)
     errmsg = ''
     warnmsg = ''
     if cxx == 'gcc':
-        if ccver < (7, 4, 0):
+        if ccver < (9, 1, 0):
             errmsg = ('The version of gcc you are using is too old.\n'
-                      'The minimum supported gcc version is 9.3.')
-        elif ccver < (9, 3, 0):
-            warnmsg = ('Using a version of gcc older than 9.3 is not '
+                      'The minimum supported gcc version is 10.2.')
+        elif ccver < (10, 2, 0):
+            warnmsg = ('Using a version of gcc older than 10.2 is not '
                        'officially supported and may result in build failures.')
         conf.flags = GccFlags()
     elif cxx == 'clang':
         if Utils.unversioned_sys_platform() == 'darwin':
-            if ccver < (10, 0, 0):
+            if ccver < (11, 0, 0):
                 errmsg = ('The version of Xcode you are using is too old.\n'
-                          'The minimum supported Xcode version is 12.4.')
-            elif ccver < (12, 0, 0):
-                warnmsg = ('Using a version of Xcode older than 12.4 is not '
+                          'The minimum supported Xcode version is 13.0.')
+            elif ccver < (13, 0, 0):
+                warnmsg = ('Using a version of Xcode older than 13.0 is not '
                            'officially supported and may result in build failures.')
         elif ccver < (7, 0, 0):
             errmsg = ('The version of clang you are using is too old.\n'
-                      'The minimum supported clang version is 7.0.')
+                      'The minimum supported clang version is 10.0.')
+        elif ccver < (10, 0, 0):
+            warnmsg = ('Using a version of clang older than 10.0 is not '
+                       'officially supported and may result in build failures.')
         conf.flags = ClangFlags()
     else:
         warnmsg = f'{cxx} compiler is unsupported'
@@ -57,6 +58,10 @@ def configure(conf):
     conf.add_supported_cxxflags(generalFlags['CXXFLAGS'])
     conf.add_supported_linkflags(generalFlags['LINKFLAGS'])
     conf.env.DEFINES += generalFlags['DEFINES']
+
+
+def get_compiler_ver(conf):
+    return tuple(int(i) for i in conf.env.CC_VERSION)
 
 
 @Configure.conf
@@ -123,20 +128,17 @@ def add_supported_linkflags(self, linkflags):
 
 
 class CompilerFlags:
-    def getCompilerVersion(self, conf):
-        return tuple(int(i) for i in conf.env.CC_VERSION)
-
     def getGeneralFlags(self, conf):
         """Get dict of CXXFLAGS, LINKFLAGS, and DEFINES that are always needed"""
-        return {
-            'CXXFLAGS': [],
-            'LINKFLAGS': [],
-            'DEFINES': ['BOOST_ASIO_NO_DEPRECATED', 'BOOST_FILESYSTEM_NO_DEPRECATED'],
-        }
+        return {'CXXFLAGS': [], 'LINKFLAGS': [], 'DEFINES': []}
 
     def getDebugFlags(self, conf):
         """Get dict of CXXFLAGS, LINKFLAGS, and DEFINES that are needed only in debug mode"""
-        return {'CXXFLAGS': [], 'LINKFLAGS': [], 'DEFINES': []}
+        return {
+            'CXXFLAGS': [],
+            'LINKFLAGS': [],
+            'DEFINES': ['BOOST_ASIO_NO_DEPRECATED'],
+        }
 
     def getOptimizedFlags(self, conf):
         """Get dict of CXXFLAGS, LINKFLAGS, and DEFINES that are needed only in optimized mode"""
@@ -222,12 +224,13 @@ class ClangFlags(GccClangCommonFlags):
                 ['-isystem', f'{brewdir}/include'], # for Homebrew
                 ['-isystem', '/opt/local/include'], # for MacPorts
             ]
-        elif Utils.unversioned_sys_platform() == 'freebsd':
-            # Bug #4790
-            flags['CXXFLAGS'] += [['-isystem', '/usr/local/include']]
-        if self.getCompilerVersion(conf) >= (18, 0, 0):
-            # Bug #5300
-            flags['CXXFLAGS'] += ['-Wno-enum-constexpr-conversion']
+        else:
+            if Utils.unversioned_sys_platform() == 'freebsd':
+                # Bug #4790
+                flags['CXXFLAGS'] += [['-isystem', '/usr/local/include']]
+            if get_compiler_ver(conf) >= (18, 0, 0) and get_compiler_ver(conf) < (20, 1, 0):
+                # Bug #5300
+                flags['CXXFLAGS'] += ['-Wno-enum-constexpr-conversion']
         return flags
 
     __cxxFlags = [
@@ -238,13 +241,18 @@ class ClangFlags(GccClangCommonFlags):
     def getDebugFlags(self, conf):
         flags = super().getDebugFlags(conf)
         flags['CXXFLAGS'] += self.__cxxFlags
+        ccver = get_compiler_ver(conf)
+        darwin = Utils.unversioned_sys_platform() == 'darwin'
         # Enable assertions in libc++
-        if self.getCompilerVersion(conf) >= (18, 0, 0):
+        if (darwin and ccver >= (17, 0, 0)) or (not darwin and ccver >= (18, 0, 0)):
             # https://libcxx.llvm.org/Hardening.html
             flags['DEFINES'] += ['_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE']
-        elif self.getCompilerVersion(conf) >= (15, 0, 0):
+        elif ccver >= (15, 0, 0):
             # https://releases.llvm.org/15.0.0/projects/libcxx/docs/UsingLibcxx.html#enabling-the-safe-libc-mode
             flags['DEFINES'] += ['_LIBCPP_ENABLE_ASSERTIONS=1']
+        # Tell libc++ to avoid including transitive headers
+        # https://libcxx.llvm.org/DesignDocs/HeaderRemovalPolicy.html
+        flags['DEFINES'] += ['_LIBCPP_REMOVE_TRANSITIVE_INCLUDES=1']
         return flags
 
     def getOptimizedFlags(self, conf):
